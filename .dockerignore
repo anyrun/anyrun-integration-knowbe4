@@ -1,0 +1,13 @@
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.sqlite
+*.db
+.env
+.git/
+.gitignore
+.DS_Store
+README.local.md
+uv.lock
