@@ -1,3 +1,4 @@
+from const import INGESTION_TAG
 from message import Message, Tag
 
 
@@ -29,11 +30,31 @@ class TestTag:
 
 class TestMessageAnyrunTagDetection:
     def test_no_anyrun_tag(self):
-        msg = Message(_raw_message(tags=[{"name": "SEND_TO_ANYRUN", "type": "user"}]))
+        msg = Message(_raw_message(tags=[{"name": "SOME_OTHER_TAG", "type": "user"}]))
         assert msg.has_anyrun_tag is False
 
     def test_has_anyrun_tag(self):
         msg = Message(_raw_message(tags=[{"name": "ANYRUN_QUEUED", "type": "system"}]))
+        assert msg.has_anyrun_tag is True
+
+    def test_ingestion_tag_alone_is_not_treated_as_an_anyrun_tag(self):
+        # INGESTION_TAG (e.g. ANYRUN_REQUEST) lives in the ANYRUN_* namespace
+        # but is the trigger a user applies to request scanning, not a sign
+        # of prior/ongoing processing - it must not block its own ingestion.
+        msg = Message(
+            _raw_message(tags=[{"name": INGESTION_TAG, "type": "user"}])
+        )
+        assert msg.has_anyrun_tag is False
+
+    def test_ingestion_tag_alongside_a_real_anyrun_tag_still_counts(self):
+        msg = Message(
+            _raw_message(
+                tags=[
+                    {"name": INGESTION_TAG, "type": "user"},
+                    {"name": "ANYRUN_SCANNED", "type": "system"},
+                ]
+            )
+        )
         assert msg.has_anyrun_tag is True
 
     def test_action_status_is_uppercased(self):
@@ -59,13 +80,13 @@ class TestEraseTags:
             _raw_message(
                 tags=[
                     {"name": "ANYRUN_QUEUED", "type": "system"},
-                    {"name": "SEND_TO_ANYRUN", "type": "user"},
+                    {"name": "ANYRUN_REQUEST", "type": "user"},
                     {"name": "ANYRUN_PENDING", "type": "system"},
                 ]
             )
         )
 
-        msg.erase_tags([Tag(name="ANYRUN_QUEUED"), Tag(name="SEND_TO_ANYRUN")])
+        msg.erase_tags([Tag(name="ANYRUN_QUEUED"), Tag(name="ANYRUN_REQUEST")])
 
         assert [t.name for t in msg.tags] == ["ANYRUN_PENDING"]
 

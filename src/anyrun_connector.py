@@ -5,7 +5,9 @@ from anyrun.connectors import SandboxConnector
 from pydantic import BaseModel
 
 from const import (
+    ANYRUN_ANALYSIS_DURATION,
     ANYRUN_API_KEY,
+    ANYRUN_PRIVACY_TYPE,
     ANYRUN_REPORT_PREFIX,
     ANYRUN_ROOT_URL,
     ANYRUN_VERDICT_RETRY_ATTEMPTS,
@@ -48,6 +50,33 @@ class ANYRUN:
             "limit" in text or "maximum" in text or "quota" in text
         )
 
+    @staticmethod
+    def _get_verdict_with_retry(connector: SandboxConnector, task_id: str) -> str:
+        """Retry fetching the verdict a few times.
+
+        The status stream can report a task as finished slightly before the
+        report is fully written server-side, so the first call(s) right after
+        can hit missing/None fields instead of a real API error.
+        """
+        last_error: Exception | None = None
+
+        for attempt in range(1, ANYRUN_VERDICT_RETRY_ATTEMPTS + 1):
+            try:
+                return connector.get_analysis_verdict(task_id)
+            except Exception as e:
+                last_error = e
+                logger.warning(
+                    "Verdict not available yet for ANY.RUN task %s (attempt %s/%s): %s",
+                    task_id,
+                    attempt,
+                    ANYRUN_VERDICT_RETRY_ATTEMPTS,
+                    e,
+                )
+                if attempt < ANYRUN_VERDICT_RETRY_ATTEMPTS:
+                    time.sleep(ANYRUN_VERDICT_RETRY_DELAY_SECONDS)
+
+        raise last_error
+
     def get_parallel_limits(self) -> UserLimits:
         try:
             with self._connector() as connector:
@@ -70,7 +99,8 @@ class ANYRUN:
                     obj_url=url,
                     env_version=self.windows_env_version,
                     opt_privacy_hidesource=True,
-                    opt_timeout=240,
+                    opt_timeout=ANYRUN_ANALYSIS_DURATION,
+                    opt_privacy_type=ANYRUN_PRIVACY_TYPE,
                 )
         except Exception as e:
             if self._is_parallel_limit_error(e):
@@ -93,34 +123,6 @@ class ANYRUN:
                 return self._get_verdict_with_retry(connector, task_id)
         except Exception as e:
             raise AnyRunApiError(f"Can't get verdict for ANY.RUN task {task_id}: {e}")
-
-    @staticmethod
-    def _get_verdict_with_retry(connector: SandboxConnector, task_id: str) -> str:
-        """Retry fetching the verdict a few times.
-
-        The status stream can report a task as finished slightly before the
-        report is fully written server-side, so the first call(s) right after
-        can hit missing/None fields instead of a real API error.
-        """
-        last_error: Exception | None = None
-
-        for attempt in range(1, ANYRUN_VERDICT_RETRY_ATTEMPTS + 1):
-            try:
-                return connector.get_analysis_verdict(task_id)
-            except Exception as e:
-                last_error = e
-                logger.warning(
-                    "Verdict not available yet for ANY.RUN task %s "
-                    "(attempt %s/%s): %s",
-                    task_id,
-                    attempt,
-                    ANYRUN_VERDICT_RETRY_ATTEMPTS,
-                    e,
-                )
-                if attempt < ANYRUN_VERDICT_RETRY_ATTEMPTS:
-                    time.sleep(ANYRUN_VERDICT_RETRY_DELAY_SECONDS)
-
-        raise last_error
 
     def report_url(self, task_id: str) -> str:
         return f"{self.report_prefix}{task_id}"

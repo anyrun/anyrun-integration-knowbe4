@@ -240,7 +240,6 @@ class Connector:
     # Job 2: check the account's available parallel task slots; if none are
     # free, skip this run entirely. Otherwise submit queued messages one at a
     # time (no internal concurrency - apscheduler runs one task per instance)
-    # and wait for each to complete before moving to the next.
     # ------------------------------------------------------------------
     def process(self) -> None:
         try:

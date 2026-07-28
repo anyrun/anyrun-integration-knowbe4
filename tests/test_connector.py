@@ -168,7 +168,7 @@ class TestProcessOne:
         conn.queue.finish_processing.assert_called_once_with(message.message_id)
 
     def test_ingestion_tag_is_dropped_alongside_queued(self, conn, fake_phisher, monkeypatch):
-        monkeypatch.setattr(connector_module, "INGESTION_TAG", "SEND_TO_ANYRUN")
+        monkeypatch.setattr(connector_module, "INGESTION_TAG", "ANYRUN_REQUEST")
         message = Message(_raw_message())
         fake_phisher.get_message.return_value = message
         conn.queue.claim_message.return_value = True
@@ -179,7 +179,7 @@ class TestProcessOne:
         conn._process_one(message.message_id)
 
         fake_phisher.remove_tags.assert_any_call(
-            message, [Tags.anyrun_queued, "SEND_TO_ANYRUN"]
+            message, [Tags.anyrun_queued, "ANYRUN_REQUEST"]
         )
 
     def test_resolved_message_is_dropped_without_submitting(self, conn, fake_phisher):

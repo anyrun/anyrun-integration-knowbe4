@@ -25,18 +25,25 @@ PHISHER_MESSAGE_FILTER = os.getenv("PHISHER_MESSAGE_FILTER", "")
 # Tag an admin applies in PhishER to opt a message into ANY.RUN scanning.
 # Only messages carrying this tag are ingested. Set to "" to ingest every
 # eligible (non-resolved, not already ANYRUN_*-tagged) message instead.
-INGESTION_TAG = os.getenv("INGESTION_TAG", "SEND_TO_ANYRUN").strip()
+# Note: this tag itself is excluded from the "already has an ANYRUN_* tag"
+# check (see Message._has_anyrun_tag), even though it lives in that
+# namespace - it's the request to scan, not a sign of prior processing.
+INGESTION_TAG = os.getenv("INGESTION_TAG", "ANYRUN_REQUEST").strip()
 PHISHER_REQUEST_TIMEOUT = _get_int("PHISHER_REQUEST_TIMEOUT", 30)
 
 # ANY.RUN
 ANYRUN_API_KEY = os.getenv("ANYRUN_API_KEY")
 ANYRUN_WINDOWS_ENV_VERSION = os.getenv("ANYRUN_WINDOWS_ENV_VERSION", "10")
+ANYRUN_PRIVACY_TYPE = os.getenv("ANYRUN_PRIVACY_TYPE", "bylink")
+ANYRUN_ANALYSIS_DURATION = _get_int("ANYRUN_ANALYSIS_DURATION", 240)
 ANYRUN_ROOT_URL = os.getenv("ANYRUN_ROOT_URL", "any.run")
 ANYRUN_REPORT_PREFIX = f"https://app.{ANYRUN_ROOT_URL}/tasks/"
 
-# The task-status stream can report a task as finished slightly before the
-# report's verdict/scores are actually populated server-side. Retry fetching
-# the verdict a few times before giving up.
+if ANYRUN_PRIVACY_TYPE not in ["public", "bylink", "owner", "byteam"]:
+    raise ConnectorNotConfigured(
+        f"Environment variable ANYRUN_PRIVACY_TYPE was set to invalid value: {ANYRUN_PRIVACY_TYPE}"
+    )
+
 ANYRUN_VERDICT_RETRY_ATTEMPTS = _get_int("ANYRUN_VERDICT_RETRY_ATTEMPTS", 5)
 ANYRUN_VERDICT_RETRY_DELAY_SECONDS = _get_int("ANYRUN_VERDICT_RETRY_DELAY_SECONDS", 10)
 
@@ -45,19 +52,14 @@ if PHISHER_API_TOKEN is None or ANYRUN_API_KEY is None:
         "Environment variables PHISHER_API_TOKEN and ANYRUN_API_KEY should be set"
     )
 
-# Redis
+# Redis connection
 REDIS_HOST = os.getenv("REDIS_HOST", "redis")
 REDIS_PORT = _get_int("REDIS_PORT", 6379)
 REDIS_DB = _get_int("REDIS_DB", 0)
 
-# Queue timing
-# How long a message may wait in `msgs:`/`inprogress:` before the cleanup job
-# considers it stuck and reports a timeout back to PhishER.
+# Queue TTLs
 QUEUE_TIMEOUT_SECONDS = _get_int("QUEUE_TIMEOUT_SECONDS", 3600)
-# Safety-net TTL applied to `msgs:`/`inprogress:` Redis keys so a dead cleanup
-# job can't leak them forever. Should stay well above QUEUE_TIMEOUT_SECONDS.
 QUEUE_SAFETY_TTL_SECONDS = _get_int("QUEUE_SAFETY_TTL_SECONDS", 3600)
-# How long finished `processed:` markers are kept around for observability.
 PROCESSED_TTL_SECONDS = _get_int("PROCESSED_TTL_SECONDS", 3600)
 
 # Job intervals
@@ -69,17 +71,9 @@ DISCOVERY_PER_PAGE = _get_int("DISCOVERY_PER_PAGE", 200)
 QUEUE_PER_PAGE = _get_int("QUEUE_PER_PAGE", 50)
 MAX_DISCOVERY_PAGES = _get_int("MAX_DISCOVERY_PAGES", 3)
 
-# The process job has no max_instances cap: each run checks available ANY.RUN
-# slots itself and skips if none are free, so apscheduler is allowed to fire
-# overlapping runs of it (e.g. while one run is still blocked waiting on a
-# sandbox result, later ticks can start and pick up other queued messages).
-# APScheduler's own default max_instances is 1, so this must be set explicitly
-# high enough that it never becomes the actual bottleneck.
 PROCESS_JOB_MAX_INSTANCES = _get_int("PROCESS_JOB_MAX_INSTANCES", 50)
 
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").strip().upper()
 LOG_DIR = os.getenv("LOG_DIR", "logs").strip()
 LOG_MAX_BYTES = _get_int("LOG_MAX_BYTES", 10 * 1024 * 1024)
-# Rotated log files kept per log, in addition to the currently-active one.
-# 2 backups + the active file = 3 files on disk total.
 LOG_BACKUP_COUNT = _get_int("LOG_BACKUP_COUNT", 2)

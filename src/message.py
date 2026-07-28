@@ -2,6 +2,7 @@ from typing import List
 
 from pydantic import BaseModel
 
+from const import INGESTION_TAG
 from exceptions import ObjectIsNone
 from tags import Tags
 
@@ -56,7 +57,12 @@ class Message(BaseModel):
     @staticmethod
     def _has_anyrun_tag(tags: List[Tag]) -> bool:
         for tag in tags:
-            if tag.name and tag.name.startswith(Tags.anyrun_prefix):
+            if not tag.name or tag.name == INGESTION_TAG:
+                # INGESTION_TAG (e.g. ANYRUN_REQUEST) is the trigger a user
+                # applies to request scanning, not a sign of prior/ongoing
+                # processing - it must not itself block ingestion.
+                continue
+            if tag.name.startswith(Tags.anyrun_prefix):
                 return True
 
         return False
