@@ -18,6 +18,14 @@ def _get_int(name: str, default: int) -> int:
     return int_val
 
 
+def _get_bool(name: str, default: bool) -> bool:
+    value = os.getenv(name)
+    if value is None or value == "":
+        return default
+
+    return value.strip().lower() in ("1", "true", "yes", "on")
+
+
 # PhishER
 PHISHER_ENDPOINT = os.getenv("PHISHER_ENDPOINT", "https://knowbe4.com/graphql")
 PHISHER_API_TOKEN = os.getenv("PHISHER_API_TOKEN")
@@ -46,6 +54,10 @@ if ANYRUN_PRIVACY_TYPE not in ["public", "bylink", "owner", "byteam"]:
 
 ANYRUN_VERDICT_RETRY_ATTEMPTS = _get_int("ANYRUN_VERDICT_RETRY_ATTEMPTS", 5)
 ANYRUN_VERDICT_RETRY_DELAY_SECONDS = _get_int("ANYRUN_VERDICT_RETRY_DELAY_SECONDS", 10)
+
+# If enabled, a malicious verdict also sets the PhishER message's `category`
+# to THREAT (phisherMessageUpdate), in addition to the usual ANYRUN_* tags.
+SET_CATEGORY_ON_MALICIOUS = _get_bool("SET_CATEGORY_ON_MALICIOUS", True)
 
 if PHISHER_API_TOKEN is None or ANYRUN_API_KEY is None:
     raise ConnectorNotConfigured(
