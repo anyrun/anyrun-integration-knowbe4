@@ -79,9 +79,6 @@ class Queue:
 
         return prefixes
 
-    def is_queued(self, message_id: str) -> bool:
-        return len(self._find_message_prefixes(message_id)) > 0
-
     def _find_active_prefixes(self, message_id: str) -> List[str]:
         """Prefixes among msgs:/inprogress: that already hold this message.
 
@@ -99,6 +96,9 @@ class Queue:
                 raise RedisError(f"Can't check key existence in Redis: {e}")
 
         return prefixes
+
+    def is_queued(self, message_id: str) -> bool:
+        return len(self._find_message_prefixes(message_id)) > 0
 
     def enqueue_message(self, message: Message) -> tuple[bool, str]:
         existing = self._find_active_prefixes(message.message_id)
@@ -123,15 +123,6 @@ class Queue:
         return [message_id for message_id, _ in entries]
 
     def claim_message(self, message_id: str) -> bool:
-        """Atomically move message_id from msgs: to inprogress:.
-
-        Job 2 can now have multiple overlapping scheduler runs in flight at
-        once, so two runs can both see the same message in `get_queued_messages`
-        before either has claimed it. GETDEL removes and returns the msgs: key
-        in a single atomic Redis operation, so only one caller ever gets a
-        non-None result back; the loser skips the message instead of also
-        submitting it to ANY.RUN.
-        """
         msg_key = self._key(self.message_queue_prefix, message_id)
         inprogress_key = self._key(self.inprogress_queue_prefix, message_id)
 

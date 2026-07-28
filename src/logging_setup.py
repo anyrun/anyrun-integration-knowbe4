@@ -5,51 +5,6 @@ from logging.handlers import RotatingFileHandler
 PLAIN_FORMAT = "%(asctime)s [%(levelname)s] [%(name)s]: %(message)s"
 
 
-class ColorFormatter(logging.Formatter):
-    """Color log lines by the subsystem that emitted them.
-
-    Colors are picked by matching the logger name (or its dotted parents)
-    against LOGGER_COLORS below, so e.g. "apscheduler.executors.default"
-    still matches the "apscheduler" entry.
-    """
-
-    RESET = "\033[0m"
-
-    LOGGER_COLORS = {
-        "apscheduler": "\033[32m",  # green
-        "anyrun_connector": "\033[34m",  # blue
-        "phisher": "\033[38;5;208m",  # orange
-    }
-
-    def __init__(self, *args, use_color: bool = True, **kwargs) -> None:
-        super().__init__(*args, **kwargs)
-        self.use_color = use_color
-
-    def format(self, record: logging.LogRecord) -> str:
-        message = super().format(record)
-
-        if not self.use_color:
-            return message
-
-        color = self._color_for(record.name)
-        if color is None:
-            return message
-
-        return f"{color}{message}{self.RESET}"
-
-    @classmethod
-    def _color_for(cls, logger_name: str) -> str | None:
-        for prefix, color in cls.LOGGER_COLORS.items():
-            if logger_name == prefix or logger_name.startswith(prefix + "."):
-                return color
-
-        return None
-
-
-def _is_scheduler_record(record: logging.LogRecord) -> bool:
-    return record.name == "apscheduler" or record.name.startswith("apscheduler.")
-
-
 class SchedulerOnlyFilter(logging.Filter):
     def filter(self, record: logging.LogRecord) -> bool:
         return _is_scheduler_record(record)
@@ -58,6 +13,10 @@ class SchedulerOnlyFilter(logging.Filter):
 class ExcludeSchedulerFilter(logging.Filter):
     def filter(self, record: logging.LogRecord) -> bool:
         return not _is_scheduler_record(record)
+
+
+def _is_scheduler_record(record: logging.LogRecord) -> bool:
+    return record.name == "apscheduler" or record.name.startswith("apscheduler.")
 
 
 def _rotating_file_handler(
@@ -77,7 +36,6 @@ def _rotating_file_handler(
 
 def configure_logging(
     level: str,
-    use_color: bool = True,
     log_dir: str = "logs",
     max_bytes: int = 10 * 1024 * 1024,
     backup_count: int = 2,
@@ -96,7 +54,7 @@ def configure_logging(
     root.handlers = []
 
     console_handler = logging.StreamHandler()
-    console_handler.setFormatter(ColorFormatter(PLAIN_FORMAT, use_color=use_color))
+    console_handler.setFormatter(logging.Formatter(PLAIN_FORMAT))
     root.addHandler(console_handler)
 
     scheduler_handler = _rotating_file_handler(

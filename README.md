@@ -1,234 +1,212 @@
-# ANY.RUN Sandbox ↔ KnowBe4 PhishER PoC
+# ANY.RUN Sandbox ↔ KnowBe4 PhishER connector
 
-PoC connector for submitting original PhishER `.eml` messages to ANY.RUN Sandbox **Windows** analysis via PhishER `rawUrl`, without storing the email file locally.
+Please refer to API Documentation for setting up this connector: https://any.run/api-documentation/#description/introduction
 
-## Concept
+Submits PhishER-reported emails to ANY.RUN Sandbox for analysis and writes the
+verdict back to PhishER as tags + a comment, without storing the original
+`.eml` file locally. Runs as three scheduled jobs backed by Redis for local
+queue state.
 
-This PoC intentionally avoids a local processing queue.
+`anyrun_phisher_connector/` is an earlier prototype kept only for reference.
+The real implementation lives in [`src/`](src/).
 
-- PhishER tags are the queue and processing state.
-- Local storage keeps only the minimal pending mapping: `phisher_message_id -> anyrun_task_id`.
-- The connector is a single Python process, not a microservice architecture.
+## Architecture
 
-## Processing tags
-
-Intermediate:
-
-- `ANYRUN_QUEUED`
-- `ANYRUN_PENDING`
-
-Final success:
-
-- `ANYRUN_SCANNED`
-- one verdict tag:
-  - `ANYRUN_MALICIOUS`
-  - `ANYRUN_SUSPICIOUS`
-  - `ANYRUN_NO_SPECIFIC_THREAT`
-
-Final error:
-
-- `ANYRUN_ERROR`
-- `ANYRUN_TIMEOUT`
-
-`ANYRUN_IN_PROGRESS` is only used as a legacy exclusion in the discovery query. The new flow does not add it.
-
-## Customer-controlled filtering
-
-The customer configures one optional PhishER query field. Empty or missing value means no customer filter:
-
-```env
-PHISHER_MESSAGE_FILTER=
-PHISHER_TRIGGER_TAG_TO_REMOVE=SEND_TO_ANYRUN
-```
-
-`PHISHER_TRIGGER_TAG_TO_REMOVE` is optional. It does not select messages. It only removes the manual/customer trigger tag from the message after final writeback so the PhishER card is not cluttered. The connector checks current message tags first and removes the configured trigger tag only if it is actually present. Leave it empty if the trigger tag should remain or if the filter does not use a trigger tag.
-
-For manual-control workflow, set `PHISHER_MESSAGE_FILTER=tags:"SEND_TO_ANYRUN"`. If the filter field is set, the connector combines it with internal ANY.RUN exclusions:
+Three [APScheduler](https://apscheduler.readthedocs.io/) interval jobs, wired
+up in [`src/main.py`](src/main.py), coordinate over a small Redis-backed
+queue in [`src/redis_queue.py`](src/redis_queue.py):
 
 ```text
-(<ANYRUN exclusions>) AND (<customer filter>)
+PhishER                         Redis                         ANY.RUN
+--------                        -----                         -------
+job 1 "ingest"
+  query eligible messages
+  tag ANYRUN_QUEUED     ------> msgs:<id>
+
+job 2 "process"                msgs:<id> --(atomic claim)--> inprogress:<id>
+  claim message                                    |
+  tag ANYRUN_PENDING                                v
+  submit rawUrl                              submit_download_windows()
+                                                     |
+                                                     v
+  wait for verdict     <----------------------  wait_for_verdict()
+  tag ANYRUN_SCANNED
+    + verdict tag
+  write comment
+  finish            inprogress:<id> --> processed:<id>
+
+job 3 "cleanup"
+  timeout stuck msgs:/inprogress: entries -> tag ANYRUN_TIMEOUT
+  re-enqueue ANYRUN_QUEUED/PENDING tags with no matching Redis entry
 ```
 
-If the field is empty or not defined, the connector processes all eligible non-resolved PhishER messages that do not already have ANYRUN processing/result tags. Internal exclusions are always added automatically, including ANYRUN state/result tags and `-status:"Resolved"`. In this mode `PHISHER_TRIGGER_TAG_TO_REMOVE=SEND_TO_ANYRUN` is safe: the connector will not try to delete `SEND_TO_ANYRUN` from messages where that tag is absent.
+### Job 1 — ingest (`Connector.ingest`)
 
-## Runtime flow
+Runs on `DISCOVERY_INTERVAL_SECONDS`. Queries PhishER for messages matching
+`INGESTION_TAG` (plus the optional `PHISHER_MESSAGE_FILTER`) that:
 
-```text
-Customer filter / empty filter
-        ↓
-Discovery polling
-        ↓
-pipelineStatus == PROCESSED
-        ↓
-add ANYRUN_QUEUED
-        ↓
-Submit worker finds ANYRUN_QUEUED
-        ↓
-submit rawUrl directly to ANY.RUN Windows Sandbox
-        ↓
-ANY.RUN downloads the original email from PhishER rawUrl using download analysis
-        ↓
-ANYRUN_QUEUED → ANYRUN_PENDING
-        ↓
-save phisher_message_id → anyrun_task_id
-        ↓
-Pending watcher checks ANY.RUN task
-        ↓
-task completed
-        ↓
-ANYRUN_PENDING → ANYRUN_SCANNED + verdict tag
-        ↓
-add comment with report URL
-        ↓
-delete pending mapping
-```
+- have `pipelineStatus == PROCESSED`
+- are not `RESOLVED`
+- don't already carry any `ANYRUN_*` tag
 
-## Windows Sandbox
+Each match is written to Redis as `msgs:<message_id>` and tagged
+`ANYRUN_QUEUED`. If the message is already tracked anywhere in Redis
+(`msgs:`/`inprogress:`), it's skipped — except a stale `processed:` marker
+from a *previous* run does **not** block re-ingestion, so re-applying
+`INGESTION_TAG` to an already-scanned message triggers a fresh analysis.
 
-The PoC uses:
+### Job 2 — process (`Connector.process`)
 
-```python
-SandboxConnector.windows(api_key)
-```
+Runs on `QUEUE_INTERVAL_SECONDS`. Unlike jobs 1 and 3, this job has **no**
+one-at-a-time lock (`max_instances` is set to `PROCESS_JOB_MAX_INSTANCES`,
+not 1): a run blocked for minutes waiting on a sandbox result doesn't stop
+later ticks from picking up other queued messages. Each run:
 
-and submits with download analysis:
+1. Reads all `msgs:*` entries.
+2. For each one, atomically claims it (Redis `GETDEL` — only one caller ever
+   wins if two overlapping runs see the same message).
+3. Tags `ANYRUN_PENDING` (and drops `ANYRUN_QUEUED` + `INGESTION_TAG`) and
+   submits the PhishER `rawUrl` directly to ANY.RUN as a Windows download
+   analysis — the email itself is never downloaded or stored locally.
+4. Blocks until the ANY.RUN task finishes, then fetches the verdict (retried
+   `ANYRUN_VERDICT_RETRY_ATTEMPTS` times — the task-status stream can report
+   "done" slightly before the verdict is actually written server-side).
+5. Tags `ANYRUN_SCANNED` + a verdict tag, writes a comment with the report
+   URL, and moves the message to `processed:`.
 
-```python
-connector.run_download_analysis(obj_url=raw_url, env_version="10", opt_privacy_hidesource=True)
-```
+If ANY.RUN reports no available parallel slot mid-submit, the message is
+returned to `msgs:` (re-tagged `ANYRUN_QUEUED`) instead of erroring. Any other
+failure tags `ANYRUN_ERROR` with the error in a comment.
 
-The connector does not download or store `.eml` files locally. It passes PhishER `rawUrl` directly to ANY.RUN using SDK `run_download_analysis()` (`obj_type=download`), and ANY.RUN retrieves the original email from that URL.
+### Job 3 — cleanup (`Connector.cleanup`)
 
+Runs on `CLEANUP_INTERVAL_SECONDS`. Two independent checks:
 
+- **Stuck queue entries**: anything sitting in `msgs:`/`inprogress:` longer
+  than `QUEUE_TIMEOUT_SECONDS` is dropped and the message is tagged
+  `ANYRUN_TIMEOUT`.
+- **Orphaned tags**: messages tagged `ANYRUN_QUEUED`/`ANYRUN_PENDING` in
+  PhishER but with no matching Redis entry (e.g. after a Redis restart) are
+  re-enqueued into `msgs:` so processing resumes.
 
-## Docker deployment
+## Tags
 
-The connector can run as a single Docker container. It does not expose inbound ports; it only needs outbound access to:
+| Tag | Meaning |
+|---|---|
+| `ANYRUN_REQUEST` (`INGESTION_TAG`) | Applied by an admin to opt a message into scanning |
+| `ANYRUN_QUEUED` | Enqueued in `msgs:`, waiting for job 2 |
+| `ANYRUN_PENDING` | Claimed by job 2, submitted to ANY.RUN, awaiting verdict |
+| `ANYRUN_SCANNED` | Analysis finished successfully (paired with a verdict tag below) |
+| `ANYRUN_MALICIOUS` / `ANYRUN_SUSPICIOUS` / `ANYRUN_NO_SPECIFIC_THREAT` | Verdict |
+| `ANYRUN_ERROR` | Submission or verdict retrieval failed |
+| `ANYRUN_TIMEOUT` | Stuck too long in a local queue (job 3) or ANY.RUN task timed out |
 
-- KnowBe4 PhishER GraphQL endpoint
-- ANY.RUN API
+Any message already carrying an `ANYRUN_*` tag is excluded from discovery, so
+`ANYRUN_SCANNED` effectively marks "already processed." `ANYRUN_REQUEST`
+itself lives in the same `ANYRUN_*` namespace but is specifically excluded
+from that check (`Message._has_anyrun_tag`) — it's the request to scan, not
+a sign of prior/ongoing processing, so it must not block its own ingestion.
 
-SQLite is still used only for the minimal pending mapping `phisher_message_id -> anyrun_task_id`. In Docker it is stored in a persistent volume at `/data/pending_tasks.sqlite`.
+## Configuration
 
-### Build image
+All configuration is environment variables, loaded from `.env` (see
+[`.env.example`](.env.example) for the full list with defaults/comments).
+Required: `PHISHER_API_TOKEN`, `ANYRUN_API_KEY`.
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `PHISHER_ENDPOINT` | `https://ca.knowbe4.com/graphql` | PhishER GraphQL endpoint |
+| `PHISHER_API_TOKEN` | *(required)* | PhishER product API token |
+| `INGESTION_TAG` | `ANYRUN_REQUEST` | Tag required for a message to be ingested; empty = ingest everything eligible |
+| `PHISHER_MESSAGE_FILTER` | *(empty)* | Extra Lucene filter ANDed with `INGESTION_TAG` |
+| `ANYRUN_API_KEY` | *(required)* | ANY.RUN API key |
+| `ANYRUN_WINDOWS_ENV_VERSION` | `10` | Windows Sandbox version for download analysis |
+| `ANYRUN_ROOT_URL` | `any.run` | ANY.RUN root URL (also used to build report links) |
+| `ANYRUN_VERDICT_RETRY_ATTEMPTS` | `5` | Verdict-fetch retry attempts before tagging `ANYRUN_ERROR` |
+| `ANYRUN_VERDICT_RETRY_DELAY_SECONDS` | `10` | Delay between verdict-fetch retries |
+| `REDIS_HOST` / `REDIS_PORT` / `REDIS_DB` | `redis` / `6379` / `0` | Redis connection |
+| `DISCOVERY_INTERVAL_SECONDS` | `300` | Job 1 interval |
+| `QUEUE_INTERVAL_SECONDS` | `30` | Job 2 interval |
+| `CLEANUP_INTERVAL_SECONDS` | `300` | Job 3 interval |
+| `PROCESS_JOB_MAX_INSTANCES` | `50` | Cap on overlapping job 2 runs |
+| `QUEUE_TIMEOUT_SECONDS` | `3600` | Age before job 3 times out a stuck `msgs:`/`inprogress:` entry |
+| `QUEUE_SAFETY_TTL_SECONDS` | `86400` | Redis TTL backstop on `msgs:`/`inprogress:` keys |
+| `PROCESSED_TTL_SECONDS` | `604800` | Redis TTL on `processed:` markers |
+| `DISCOVERY_PER_PAGE` / `QUEUE_PER_PAGE` / `MAX_DISCOVERY_PAGES` | `200` / `50` / `3` | PhishER pagination |
+| `LOG_LEVEL` | `INFO` | Root log level |
+| `LOG_DIR` | `logs` | Directory for rotating log files |
+| `LOG_MAX_BYTES` / `LOG_BACKUP_COUNT` | `10485760` / `2` | Log rotation size and backup count (2 backups + active file = 3 files on disk per log) |
+
+## Logging
+
+Console output is colored by subsystem: `apscheduler` (green), `anyrun_connector`
+(blue), `phisher` (orange). Everything is also written to rotating files under
+`LOG_DIR`:
+
+- `scheduler.log` — everything from the `apscheduler` logger tree
+- `app.log` — everything else (phisher, anyrun_connector, connector, main)
+
+Each file rotates at `LOG_MAX_BYTES` and keeps `LOG_BACKUP_COUNT` old copies
+plus the active file. See [`src/logging_setup.py`](src/logging_setup.py).
+
+## Running locally
 
 ```bash
-docker build -t anyrun-phisher-connector:latest .
+uv sync                 # installs runtime deps (see Testing below for dev deps)
+cp .env.example .env    # fill in PHISHER_API_TOKEN and ANYRUN_API_KEY
 ```
 
-### Run with Docker
+You need a reachable Redis (`docker run -p 6379:6379 redis:8` works for local
+dev) and `REDIS_HOST=localhost` in `.env`.
+
+`src/*.py` use flat imports (`from const import ...`, not
+`from src.const import ...`). Run it as a script from the repo root — Python
+automatically adds a script's own directory to `sys.path`, so this satisfies
+the flat imports without needing `cd src` first. That matters: `LOG_DIR`
+(default `logs`) is resolved relative to the current working directory, so
+running from the repo root is also what puts log files in `./logs` instead of
+`./src/logs`.
 
 ```bash
-cp .env.docker.example .env
-# edit .env and set PHISHER_API_TOKEN and ANYRUN_API_KEY
-docker run --rm \
-  --env-file .env \
-  -v anyrun-phisher-data:/data \
-  -e PENDING_DB_PATH=/data/pending_tasks.sqlite \
-  anyrun-phisher-connector:latest
+uv run --env-file .env python src/main.py
 ```
 
-### Run with Docker Compose
+## Docker
+
+`docker-compose.yml` runs two services: `app` (this connector) and `redis:8`
+with an `appendonly` data volume. The Dockerfile copies `src/` flattened
+directly into `/app` (so the same flat-import style works unmodified) and
+runs as a non-root `connector` user.
 
 ```bash
-cp .env.docker.example .env
-# edit .env and set PHISHER_API_TOKEN and ANYRUN_API_KEY
 docker compose up -d --build
-docker compose logs -f
+docker compose logs -f app
 ```
 
-After changing `.env`, recreate the container so Docker Compose applies the new environment:
+Log files land in `./logs` on the host via a bind mount (not a named Docker
+volume), so `logs/scheduler.log` / `logs/app.log` are just regular files in
+the project directory.
+
+## Testing
 
 ```bash
-docker compose up -d --build --force-recreate
+uv run pytest
 ```
 
-To stop:
+Tests live in [`tests/`](tests/) and mock everything external — Redis via
+[`fakeredis`](https://github.com/cunla/fakeredis-py), PhishER's
+`requests.Session`, and ANY.RUN's `SandboxConnector` — so the suite needs no
+live server, PhishER account, or ANY.RUN account.
+
+Test/dev-only dependencies (`pytest`, `pytest-cov`, `fakeredis`) live under
+`[dependency-groups] dev` in `pyproject.toml` (PEP 735), not
+`[project.dependencies]`. The Dockerfile's `pip install .` only ever
+resolves `[project.dependencies]`, so none of this leaks into the image.
+
+Coverage report:
 
 ```bash
-docker compose down
+uv run pytest --cov --cov-report=term-missing
+# or, for an interactive line-by-line HTML report:
+uv run pytest --cov --cov-report=html   # see htmlcov/index.html
 ```
-
-To remove the pending SQLite volume:
-
-```bash
-docker compose down -v
-```
-
-## Installation
-
-```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-cp .env.example .env
-```
-
-On Windows PowerShell:
-
-```powershell
-py -m venv .venv
-.\.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
-copy .env.example .env
-```
-
-Edit `.env`:
-
-```env
-PHISHER_ENDPOINT=https://ca.knowbe4.com/graphql
-PHISHER_API_TOKEN=...
-ANYRUN_API_KEY=...
-ANYRUN_WINDOWS_ENV_VERSION=10
-PHISHER_MESSAGE_FILTER=
-PHISHER_TRIGGER_TAG_TO_REMOVE=SEND_TO_ANYRUN
-```
-
-Run:
-
-```bash
-python run.py
-```
-
-## Important PoC notes
-
-1. `rawUrl` is refreshed before every submit attempt via `phisherMessage(id)`.
-2. The connector does not store original `.eml` files in `tmp` or any local directory.
-3. If `pipelineStatus != PROCESSED`, the message is skipped and will be checked again on the next discovery polling cycle.
-4. If ANY.RUN returns a parallel task limit error, the connector leaves `ANYRUN_QUEUED` on the message and retries later.
-5. The connector writes a short PhishER comment only:
-
-```text
-ANY.RUN result: MALICIOUS ACTIVITY. Malicious activity detected in sandbox. Full report: https://app.any.run/tasks/<task_id>
-```
-
-6. The PoC does not post full HTML reports or large IOC lists into PhishER Discussion.
-7. Completed jobs are not retained locally. Only active pending task mappings are stored.
-
-## Minimal local storage
-
-SQLite table:
-
-```sql
-CREATE TABLE pending_tasks (
-    phisher_message_id TEXT PRIMARY KEY,
-    anyrun_task_id TEXT NOT NULL,
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
-);
-```
-
-This is not a queue. It exists only so the connector can recover after restart and continue checking ANY.RUN tasks that were already submitted.
-
-## Queue ordering note
-
-The submit worker requests queued messages with `sortField: REPORTED_AT` and `sortDirection: ASCENDING`, then additionally sorts the returned page client-side by the `CREATED.createdAt` event before submitting. This makes FIFO behavior deterministic within the fetched queue page.
-
-### Resolved message handling
-
-Resolved PhishER messages are excluded in two layers:
-
-- discovery query includes `-status:"Resolved"`;
-- connector also checks GraphQL `actionStatus == RESOLVED` before queueing/submitting.
-
-If a message was already tagged `ANYRUN_QUEUED` and then becomes Resolved before submission, the connector removes `ANYRUN_QUEUED` and does not submit it to ANY.RUN.

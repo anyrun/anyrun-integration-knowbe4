@@ -6,7 +6,7 @@ from tags import Tags
 
 class TestTagQuery:
     def test_wraps_tag_name(self):
-        assert Tags.tag_query("SEND_TO_ANYRUN") == 'tags:"SEND_TO_ANYRUN"'
+        assert Tags.tag_query("ANYRUN_REQUEST") == 'tags:"ANYRUN_REQUEST"'
 
 
 class TestInternalExclusionsQuery:
@@ -20,18 +20,18 @@ class TestInternalExclusionsQuery:
 
 class TestBuildDiscoveryQuery:
     def test_default_ingestion_tag_only(self):
-        query = Tags.build_discovery_query("", "SEND_TO_ANYRUN")
+        query = Tags.build_discovery_query("", "ANYRUN_REQUEST")
 
-        assert '(tags:"SEND_TO_ANYRUN")' in query
+        assert '(tags:"ANYRUN_REQUEST")' in query
         assert query.count(" AND (") == 1  # only the internal-exclusions clause + tag
 
     def test_combines_customer_filter_and_ingestion_tag(self):
-        query = Tags.build_discovery_query('subject:"invoice"', "SEND_TO_ANYRUN")
+        query = Tags.build_discovery_query('subject:"invoice"', "ANYRUN_REQUEST")
 
-        assert '(tags:"SEND_TO_ANYRUN")' in query
+        assert '(tags:"ANYRUN_REQUEST")' in query
         assert '(subject:"invoice")' in query
         # ingestion tag clause must come before the customer filter clause
-        assert query.index('tags:"SEND_TO_ANYRUN"') < query.index('subject:"invoice"')
+        assert query.index('tags:"ANYRUN_REQUEST"') < query.index('subject:"invoice"')
 
     def test_empty_ingestion_tag_means_ingest_everything(self):
         query = Tags.build_discovery_query("", "")
@@ -42,8 +42,8 @@ class TestBuildDiscoveryQuery:
         assert '-status:"Resolved"' in query
 
     def test_ingestion_tag_is_stripped(self):
-        query = Tags.build_discovery_query("", "  SEND_TO_ANYRUN  ")
-        assert '(tags:"SEND_TO_ANYRUN")' in query
+        query = Tags.build_discovery_query("", "  ANYRUN_REQUEST  ")
+        assert '(tags:"ANYRUN_REQUEST")' in query
 
 
 class TestNormalizeVerdict:
