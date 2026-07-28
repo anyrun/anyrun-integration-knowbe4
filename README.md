@@ -73,6 +73,11 @@ later ticks from picking up other queued messages. Each run:
    "done" slightly before the verdict is actually written server-side).
 5. Tags `ANYRUN_SCANNED` + a verdict tag, writes a comment with the report
    URL, and moves the message to `processed:`.
+6. If the verdict is `malicious` and `SET_CATEGORY_ON_MALICIOUS` is enabled
+   (default), also sets the PhishER message's `category` to `THREAT` via
+   `phisherMessageUpdate`. This is best-effort: a failure here is logged but
+   does not undo the tags/comment already written or block finishing the
+   message.
 
 If ANY.RUN reports no available parallel slot mid-submit, the message is
 returned to `msgs:` (re-tagged `ANYRUN_QUEUED`) instead of erroring. Any other
@@ -119,8 +124,11 @@ Required: `PHISHER_API_TOKEN`, `ANYRUN_API_KEY`.
 | `PHISHER_API_TOKEN` | *(required)* | PhishER product API token |
 | `INGESTION_TAG` | `ANYRUN_REQUEST` | Tag required for a message to be ingested; empty = ingest everything eligible |
 | `PHISHER_MESSAGE_FILTER` | *(empty)* | Extra Lucene filter ANDed with `INGESTION_TAG` |
+| `SET_CATEGORY_ON_MALICIOUS` | `true` | Also set the PhishER message `category` to `THREAT` on a malicious verdict |
 | `ANYRUN_API_KEY` | *(required)* | ANY.RUN API key |
 | `ANYRUN_WINDOWS_ENV_VERSION` | `10` | Windows Sandbox version for download analysis |
+| `ANYRUN_PRIVACY_TYPE` | `bylink` | ANY.RUN analysis privacy (`public`/`bylink`/`owner`/`byteam`) |
+| `ANYRUN_ANALYSIS_DURATION` | `240` | Sandbox analysis timeout in seconds |
 | `ANYRUN_ROOT_URL` | `any.run` | ANY.RUN root URL (also used to build report links) |
 | `ANYRUN_VERDICT_RETRY_ATTEMPTS` | `5` | Verdict-fetch retry attempts before tagging `ANYRUN_ERROR` |
 | `ANYRUN_VERDICT_RETRY_DELAY_SECONDS` | `10` | Delay between verdict-fetch retries |
@@ -130,8 +138,8 @@ Required: `PHISHER_API_TOKEN`, `ANYRUN_API_KEY`.
 | `CLEANUP_INTERVAL_SECONDS` | `300` | Job 3 interval |
 | `PROCESS_JOB_MAX_INSTANCES` | `50` | Cap on overlapping job 2 runs |
 | `QUEUE_TIMEOUT_SECONDS` | `3600` | Age before job 3 times out a stuck `msgs:`/`inprogress:` entry |
-| `QUEUE_SAFETY_TTL_SECONDS` | `86400` | Redis TTL backstop on `msgs:`/`inprogress:` keys |
-| `PROCESSED_TTL_SECONDS` | `604800` | Redis TTL on `processed:` markers |
+| `QUEUE_SAFETY_TTL_SECONDS` | `3600` | Redis TTL backstop on `msgs:`/`inprogress:` keys |
+| `PROCESSED_TTL_SECONDS` | `3600` | Redis TTL on `processed:` markers |
 | `DISCOVERY_PER_PAGE` / `QUEUE_PER_PAGE` / `MAX_DISCOVERY_PAGES` | `200` / `50` / `3` | PhishER pagination |
 | `LOG_LEVEL` | `INFO` | Root log level |
 | `LOG_DIR` | `logs` | Directory for rotating log files |

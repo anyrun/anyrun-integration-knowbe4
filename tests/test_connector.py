@@ -167,6 +167,60 @@ class TestProcessOne:
         fake_phisher.add_comment.assert_called_once()
         conn.queue.finish_processing.assert_called_once_with(message.message_id)
 
+    def test_malicious_verdict_sets_threat_category_by_default(self, conn, fake_phisher):
+        message = Message(_raw_message())
+        fake_phisher.get_message.return_value = message
+        conn.queue.claim_message.return_value = True
+        conn.anyrun.submit_download_windows.return_value = "task-1"
+        conn.anyrun.wait_for_verdict.return_value = "Malicious activity"
+        conn.anyrun.report_url.return_value = "url"
+
+        conn._process_one(message.message_id)
+
+        fake_phisher.set_category.assert_called_once_with(
+            message, Tags.category_threat
+        )
+
+    def test_malicious_verdict_does_not_set_category_when_disabled(
+        self, conn, fake_phisher, monkeypatch
+    ):
+        monkeypatch.setattr(connector_module, "SET_CATEGORY_ON_MALICIOUS", False)
+        message = Message(_raw_message())
+        fake_phisher.get_message.return_value = message
+        conn.queue.claim_message.return_value = True
+        conn.anyrun.submit_download_windows.return_value = "task-1"
+        conn.anyrun.wait_for_verdict.return_value = "Malicious activity"
+        conn.anyrun.report_url.return_value = "url"
+
+        conn._process_one(message.message_id)
+
+        fake_phisher.set_category.assert_not_called()
+
+    def test_non_malicious_verdict_does_not_set_category(self, conn, fake_phisher):
+        message = Message(_raw_message())
+        fake_phisher.get_message.return_value = message
+        conn.queue.claim_message.return_value = True
+        conn.anyrun.submit_download_windows.return_value = "task-1"
+        conn.anyrun.wait_for_verdict.return_value = "No threats detected"
+        conn.anyrun.report_url.return_value = "url"
+
+        conn._process_one(message.message_id)
+
+        fake_phisher.set_category.assert_not_called()
+
+    def test_set_category_failure_does_not_abort_processing(self, conn, fake_phisher):
+        message = Message(_raw_message())
+        fake_phisher.get_message.return_value = message
+        conn.queue.claim_message.return_value = True
+        conn.anyrun.submit_download_windows.return_value = "task-1"
+        conn.anyrun.wait_for_verdict.return_value = "Malicious activity"
+        conn.anyrun.report_url.return_value = "url"
+        fake_phisher.set_category.side_effect = RuntimeError("PhishER down")
+
+        conn._process_one(message.message_id)  # must not raise
+
+        conn.queue.finish_processing.assert_called_once_with(message.message_id)
+
     def test_ingestion_tag_is_dropped_alongside_queued(self, conn, fake_phisher, monkeypatch):
         monkeypatch.setattr(connector_module, "INGESTION_TAG", "ANYRUN_REQUEST")
         message = Message(_raw_message())

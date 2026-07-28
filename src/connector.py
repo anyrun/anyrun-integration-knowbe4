@@ -6,6 +6,7 @@ from const import (
     MAX_DISCOVERY_PAGES,
     QUEUE_PER_PAGE,
     QUEUE_TIMEOUT_SECONDS,
+    SET_CATEGORY_ON_MALICIOUS,
 )
 from exceptions import AnyRunParallelLimitError
 from message import Message
@@ -97,8 +98,11 @@ class Connector:
                 phisher.add_tags(message, [Tags.anyrun_scanned, verdict_tag])
                 phisher.add_comment(
                     message,
-                    f"ANY.RUN result: {verdict.upper()}. Full report: {report_url}",
+                    f"ANY.RUN result: {verdict.upper()}. Link to analysis: {report_url}",
                 )
+
+                if verdict_tag == Tags.anyrun_malicious and SET_CATEGORY_ON_MALICIOUS:
+                    self._safe_set_category(phisher, message, Tags.category_threat)
 
                 self.queue.finish_processing(message_id)
                 logger.info("Finished processing %s: %s", message_id, verdict)
@@ -148,6 +152,16 @@ class Connector:
         except Exception:
             logger.exception(
                 "Failed to remove tags %s from %s", tags, message.message_id
+            )
+
+    def _safe_set_category(
+        self, phisher: Phisher, message: Message, category: str
+    ) -> None:
+        try:
+            phisher.set_category(message, category)
+        except Exception:
+            logger.exception(
+                "Failed to set category %s on %s", category, message.message_id
             )
 
     def _cleanup_stale_queue(self, prefix: str, tags_to_remove: list[str]) -> None:

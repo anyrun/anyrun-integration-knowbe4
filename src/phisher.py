@@ -192,6 +192,27 @@ class Phisher:
         except Exception as e:
             raise PhisherRequestError(f"Can't remove tags. Details: {e}")
 
+    def set_category(self, message: Message, category: str) -> None:
+        query = """
+        mutation UpdateMessageCategory($id: String!, $payload: MessageUpdateAttributes!) {
+          phisherMessageUpdate(id: $id, payload: $payload) {
+            node { id }
+            errors { field reason }
+          }
+        }
+        """
+        try:
+            data = self._make_request(
+                query, {"id": message.message_id, "payload": {"category": category}}
+            )
+            errors = data["phisherMessageUpdate"].get("errors") or []
+            if errors:
+                raise PhisherRequestError(f"phisherMessageUpdate errors: {errors}")
+
+            logger.debug("Set category %s on message %s", category, message.message_id)
+        except Exception as e:
+            raise PhisherRequestError(f"Can't set category. Details: {e}")
+
     def add_comment(self, message: Message, comment: str) -> None:
         query = """
         mutation AddComment($id: String!, $comment: String!) {

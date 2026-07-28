@@ -162,6 +162,48 @@ class TestRemoveTags:
         assert message.tags == []
 
 
+class TestSetCategory:
+    def test_sends_category_in_payload(self, phisher):
+        message = Message(_raw_message())
+        captured = {}
+
+        def fake_request(**kwargs):
+            captured["variables"] = kwargs["json"]["variables"]
+            return FakeResponse(
+                {
+                    "data": {
+                        "phisherMessageUpdate": {
+                            "node": {"id": message.message_id},
+                            "errors": [],
+                        }
+                    }
+                }
+            )
+
+        phisher._session.request = fake_request
+
+        phisher.set_category(message, "THREAT")
+
+        assert captured["variables"]["id"] == message.message_id
+        assert captured["variables"]["payload"] == {"category": "THREAT"}
+
+    def test_raises_on_graphql_errors(self, phisher):
+        message = Message(_raw_message())
+        phisher._session.request = lambda **kwargs: FakeResponse(
+            {
+                "data": {
+                    "phisherMessageUpdate": {
+                        "node": None,
+                        "errors": [{"field": "category", "reason": "invalid"}],
+                    }
+                }
+            }
+        )
+
+        with pytest.raises(PhisherRequestError):
+            phisher.set_category(message, "THREAT")
+
+
 class TestAddComment:
     def test_success(self, phisher):
         message = Message(_raw_message())

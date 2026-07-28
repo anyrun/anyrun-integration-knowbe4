@@ -16,6 +16,12 @@ class Tags:
     anyrun_suspicious: str = "ANYRUN_SUSPICIOUS"
     anyrun_no_specific_threat: str = "ANYRUN_NO_SPECIFIC_THREAT"
 
+    # PhishER message `category` (phisherMessageUpdate's Categories enum).
+    category_unknown: str = "UNKNOWN"
+    category_clean: str = "CLEAN"
+    category_spam: str = "SPAM"
+    category_threat: str = "THREAT"
+
     internal_exclusion_tags: List[str] = [
         anyrun_scanned,
         anyrun_pending,
