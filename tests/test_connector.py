@@ -110,14 +110,14 @@ class TestIngest:
 
 class TestProcess:
     def test_skips_when_nothing_queued(self, conn):
-        conn.queue.get_queued_messages.return_value = []
+        conn.queue.fetch_with_order.return_value = []
 
         conn.process()
 
         conn.anyrun.submit_download_windows.assert_not_called()
 
     def test_processes_each_queued_message(self, conn, fake_phisher, monkeypatch):
-        conn.queue.get_queued_messages.return_value = ["a", "b"]
+        conn.queue.fetch_with_order.return_value = ["a", "b"]
         conn.anyrun.get_parallel_limits.return_value = UserLimits(total=5, available=5)
         calls = []
         monkeypatch.setattr(
@@ -131,7 +131,7 @@ class TestProcess:
     def test_one_message_failing_does_not_stop_the_others(
         self, conn, fake_phisher, monkeypatch
     ):
-        conn.queue.get_queued_messages.return_value = ["a", "b"]
+        conn.queue.fetch_with_order.return_value = ["a", "b"]
         conn.anyrun.get_parallel_limits.return_value = UserLimits(total=5, available=5)
         calls = []
 

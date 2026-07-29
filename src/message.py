@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import List
 
 from pydantic import BaseModel
@@ -66,6 +67,24 @@ class Message(BaseModel):
                 return True
 
         return False
+
+    def created_at_timestamp(self) -> int | None:
+        """Unix timestamp (seconds) parsed from the CREATED event's createdAt.
+
+        Used to order queued messages by when the email was actually
+        reported in PhishER, not by when this connector happened to enqueue
+        it locally.
+        """
+        for event in self.events:
+            if event.eventType != "CREATED":
+                continue
+
+            try:
+                return int(datetime.fromisoformat(event.createdAt).timestamp())
+            except (ValueError, TypeError):
+                return None
+
+        return None
 
     def inject_tags(self, tags: List[Tag]) -> None:
         existing_names = {tag.name for tag in self.tags}

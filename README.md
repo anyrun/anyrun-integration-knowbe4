@@ -62,7 +62,11 @@ one-at-a-time lock (`max_instances` is set to `PROCESS_JOB_MAX_INSTANCES`,
 not 1): a run blocked for minutes waiting on a sandbox result doesn't stop
 later ticks from picking up other queued messages. Each run:
 
-1. Reads all `msgs:*` entries.
+1. Reads all `msgs:*` entries, oldest PhishER-reported email first
+   (`Queue.fetch_with_order`, sorted by a `created_at` Redis hash populated
+   at enqueue time from each message's `CREATED` event — not by local
+   enqueue time, so processing order matches original report order even if
+   messages were discovered out of order or requeued after an error).
 2. For each one, atomically claims it (Redis `GETDEL` — only one caller ever
    wins if two overlapping runs see the same message).
 3. Tags `ANYRUN_PENDING` (and drops `ANYRUN_QUEUED` + `INGESTION_TAG`) and

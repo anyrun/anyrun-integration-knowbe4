@@ -62,6 +62,43 @@ class TestMessageAnyrunTagDetection:
         assert msg.action_status == "RESOLVED"
 
 
+class TestCreatedAtTimestamp:
+    def test_parses_created_event(self):
+        msg = Message(
+            _raw_message(
+                events=[{"eventType": "CREATED", "createdAt": "2026-06-04T10:19:16Z"}]
+            )
+        )
+        assert msg.created_at_timestamp() == 1780568356
+
+    def test_ignores_non_created_events(self):
+        msg = Message(
+            _raw_message(
+                events=[
+                    {"eventType": "TAG_ADDED", "createdAt": "2026-06-04T10:19:16Z"},
+                    {"eventType": "CREATED", "createdAt": "2026-06-01T00:00:00Z"},
+                ]
+            )
+        )
+        assert msg.created_at_timestamp() == 1780272000
+
+    def test_none_when_no_created_event(self):
+        msg = Message(
+            _raw_message(events=[{"eventType": "TAG_ADDED", "createdAt": "2026-06-04T10:19:16Z"}])
+        )
+        assert msg.created_at_timestamp() is None
+
+    def test_none_when_no_events_at_all(self):
+        msg = Message(_raw_message())
+        assert msg.created_at_timestamp() is None
+
+    def test_none_on_unparseable_date(self):
+        msg = Message(
+            _raw_message(events=[{"eventType": "CREATED", "createdAt": "not-a-date"}])
+        )
+        assert msg.created_at_timestamp() is None
+
+
 class TestInjectTags:
     def test_appends_new_tags(self):
         msg = Message(_raw_message())
