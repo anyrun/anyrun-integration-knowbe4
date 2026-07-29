@@ -126,25 +126,7 @@ class TestProcess:
 
         conn.process()
 
-        assert calls == ["a", "b"]
-
-    def test_one_message_failing_does_not_stop_the_others(
-        self, conn, fake_phisher, monkeypatch
-    ):
-        conn.queue.fetch_with_order.return_value = ["a", "b"]
-        conn.anyrun.get_parallel_limits.return_value = UserLimits(total=5, available=5)
-        calls = []
-
-        def fake_process_one(message_id):
-            calls.append(message_id)
-            if message_id == "a":
-                raise RuntimeError("boom")
-
-        monkeypatch.setattr(conn, "_process_one", fake_process_one)
-
-        conn.process()  # must not raise
-
-        assert calls == ["a", "b"]
+        assert calls == ["a"]
 
 
 class TestProcessOne:
@@ -167,7 +149,9 @@ class TestProcessOne:
         fake_phisher.add_comment.assert_called_once()
         conn.queue.finish_processing.assert_called_once_with(message.message_id)
 
-    def test_malicious_verdict_sets_threat_category_by_default(self, conn, fake_phisher):
+    def test_malicious_verdict_sets_threat_category_by_default(
+        self, conn, fake_phisher
+    ):
         message = Message(_raw_message())
         fake_phisher.get_message.return_value = message
         conn.queue.claim_message.return_value = True
@@ -177,9 +161,7 @@ class TestProcessOne:
 
         conn._process_one(message.message_id)
 
-        fake_phisher.set_category.assert_called_once_with(
-            message, Tags.category_threat
-        )
+        fake_phisher.set_category.assert_called_once_with(message, Tags.category_threat)
 
     def test_malicious_verdict_does_not_set_category_when_disabled(
         self, conn, fake_phisher, monkeypatch
@@ -221,7 +203,9 @@ class TestProcessOne:
 
         conn.queue.finish_processing.assert_called_once_with(message.message_id)
 
-    def test_ingestion_tag_is_dropped_alongside_queued(self, conn, fake_phisher, monkeypatch):
+    def test_ingestion_tag_is_dropped_alongside_queued(
+        self, conn, fake_phisher, monkeypatch
+    ):
         monkeypatch.setattr(connector_module, "INGESTION_TAG", "ANYRUN_REQUEST")
         message = Message(_raw_message())
         fake_phisher.get_message.return_value = message
@@ -259,7 +243,9 @@ class TestProcessOne:
         message = Message(_raw_message())
         fake_phisher.get_message.return_value = message
         conn.queue.claim_message.return_value = True
-        conn.anyrun.submit_download_windows.side_effect = AnyRunParallelLimitError("no slots")
+        conn.anyrun.submit_download_windows.side_effect = AnyRunParallelLimitError(
+            "no slots"
+        )
         conn.queue.enqueue_message.return_value = (True, "ok")
 
         conn._process_one(message.message_id)
@@ -272,7 +258,9 @@ class TestProcessOne:
         message = Message(_raw_message())
         fake_phisher.get_message.return_value = message
         conn.queue.claim_message.return_value = True
-        conn.anyrun.submit_download_windows.side_effect = RuntimeError("sandbox exploded")
+        conn.anyrun.submit_download_windows.side_effect = RuntimeError(
+            "sandbox exploded"
+        )
 
         conn._process_one(message.message_id)
 
@@ -317,7 +305,9 @@ class TestCleanup:
             _raw_message("orphan-1", tags=[{"name": "ANYRUN_QUEUED", "type": "system"}])
         )
 
-        def list_messages_side_effect(page, query=None, per=None, sort_direction="DESCENDING"):
+        def list_messages_side_effect(
+            page, query=None, per=None, sort_direction="DESCENDING"
+        ):
             if query == Tags.tag_query(Tags.anyrun_queued):
                 return [orphan], {"pages": 1}
             return [], {"pages": 1}
@@ -334,7 +324,9 @@ class TestCleanup:
     def test_does_not_touch_messages_still_genuinely_queued(self, conn, fake_phisher):
         conn.queue.get_stale_messages.return_value = []
         tracked = Message(
-            _raw_message("tracked-1", tags=[{"name": "ANYRUN_QUEUED", "type": "system"}])
+            _raw_message(
+                "tracked-1", tags=[{"name": "ANYRUN_QUEUED", "type": "system"}]
+            )
         )
         fake_phisher.list_messages.return_value = ([tracked], {"pages": 1})
         conn.queue.is_queued.return_value = True

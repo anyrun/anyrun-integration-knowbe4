@@ -14,7 +14,7 @@ class Tags:
 
     anyrun_malicious: str = "ANYRUN_MALICIOUS"
     anyrun_suspicious: str = "ANYRUN_SUSPICIOUS"
-    anyrun_no_specific_threat: str = "ANYRUN_NO_SPECIFIC_THREAT"
+    anyrun_no_specific_threat: str = "ANYRUN_CLEAN"
 
     # PhishER message `category` (phisherMessageUpdate's Categories enum).
     category_unknown: str = "UNKNOWN"
@@ -61,7 +61,9 @@ class Tags:
         return f'{tag_exclusions} AND -status:"Resolved"'
 
     @staticmethod
-    def build_discovery_query(customer_filter: str = "", ingestion_tag: str = "") -> str:
+    def build_discovery_query(
+        customer_filter: str = "", ingestion_tag: str = ""
+    ) -> str:
         clauses = [Tags.internal_exclusions_query()]
 
         normalized_tag = ingestion_tag.strip()

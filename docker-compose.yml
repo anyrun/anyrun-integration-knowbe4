@@ -1,7 +1,7 @@
 services:
   app:
     build: .
-    container_name: anyrun-phisher-connector
+    container_name: anyrun-integration-knowbe4
     restart: unless-stopped
     env_file: .env
     environment:
@@ -17,7 +17,7 @@ services:
 
   redis:
     image: redis:8
-    container_name: anyrun-phisher-redis
+    container_name: anyrun-integration-knowbe4-redis
     restart: unless-stopped
     command: ["redis-server", "--appendonly", "yes"]
     volumes:

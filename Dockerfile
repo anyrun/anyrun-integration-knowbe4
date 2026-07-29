@@ -6,15 +6,11 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-RUN addgroup --system connector && adduser --system --ingroup connector connector
-
 COPY pyproject.toml ./
 RUN pip install .
 
 COPY ./src /app
 
-RUN mkdir -p /app/logs && chown -R connector:connector /app
-
-USER connector
+RUN mkdir -p /app/logs
 
 CMD ["python", "main.py"]
