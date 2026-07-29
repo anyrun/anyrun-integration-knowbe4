@@ -262,7 +262,7 @@ class Connector:
             logger.exception("Failed to fetch ANY.RUN parallel limits")
             return
 
-        message_ids = self.queue.get_queued_messages()
+        message_ids = self.queue.fetch_with_order(order="asc")
         if len(message_ids) == 0:
             logger.debug("No queued messages to process")
             return
@@ -276,17 +276,18 @@ class Connector:
             )
             return
 
+        message_id = message_ids[0]
+
         logger.info(
-            "Processing %s message(s) sequentially (%s slot(s) available)",
-            len(message_ids),
+            "Processing message %s (%s slot(s) available)",
+            message_id,
             limits.available,
         )
 
-        for message_id in message_ids:
-            try:
-                self._process_one(message_id)
-            except Exception:
-                logger.exception("Unhandled error processing %s", message_id)
+        try:
+            self._process_one(message_id)
+        except Exception:
+            logger.exception("Unhandled error processing %s", message_id)
 
     # ------------------------------------------------------------------
     # Job 3: clean up messages stuck too long in local queues, and

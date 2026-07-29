@@ -8,14 +8,18 @@ from message import Message
 from redis_queue import Queue
 
 
-def _raw_message(message_id: str) -> dict:
+def _raw_message(message_id: str, created_at: str | None = None) -> dict:
+    events = []
+    if created_at is not None:
+        events.append({"eventType": "CREATED", "createdAt": created_at})
+
     return {
         "id": message_id,
         "rawUrl": "https://example.com/e.eml",
         "pipelineStatus": "PROCESSED",
         "actionStatus": "open",
         "tags": [],
-        "events": [],
+        "events": events,
     }
 
 
@@ -144,18 +148,71 @@ class TestIsQueued:
         assert queue.is_queued("nope") is False
 
 
-class TestGetQueuedMessages:
-    def test_returns_oldest_first(self, queue, monkeypatch):
-        timestamps = iter([3000, 1000, 2000])
-        monkeypatch.setattr(
-            queue, "_now_ms", lambda: str(next(timestamps))
+class TestFetchWithOrder:
+    def test_orders_by_phisher_created_event_ascending_by_default(self, queue):
+        # Enqueued out of order; sort must follow the CREATED event time,
+        # not insertion order.
+        queue.enqueue_message(
+            Message(_raw_message("third", created_at="2026-01-03T00:00:00Z"))
+        )
+        queue.enqueue_message(
+            Message(_raw_message("first", created_at="2026-01-01T00:00:00Z"))
+        )
+        queue.enqueue_message(
+            Message(_raw_message("second", created_at="2026-01-02T00:00:00Z"))
         )
 
-        queue.enqueue_message(Message(_raw_message("third")))
-        queue.enqueue_message(Message(_raw_message("first")))
-        queue.enqueue_message(Message(_raw_message("second")))
+        assert queue.fetch_with_order() == ["first", "second", "third"]
 
-        assert queue.get_queued_messages() == ["first", "second", "third"]
+    def test_desc_order_reverses(self, queue):
+        queue.enqueue_message(
+            Message(_raw_message("first", created_at="2026-01-01T00:00:00Z"))
+        )
+        queue.enqueue_message(
+            Message(_raw_message("second", created_at="2026-01-02T00:00:00Z"))
+        )
+
+        assert queue.fetch_with_order(order="desc") == ["second", "first"]
+
+    def test_message_without_created_event_falls_back_to_now(self, queue, monkeypatch):
+        monkeypatch.setattr(queue, "_now_seconds", lambda: 5000)
+        queue.enqueue_message(Message(_raw_message("no-event")))
+
+        created_at = queue.redis.hget(queue.created_at_key, "no-event")
+        assert created_at == "5000"
+
+    def test_empty_queue_returns_empty_list(self, queue):
+        assert queue.fetch_with_order() == []
+
+    def test_claimed_message_is_excluded(self, queue):
+        queue.enqueue_message(
+            Message(_raw_message("first", created_at="2026-01-01T00:00:00Z"))
+        )
+        queue.enqueue_message(
+            Message(_raw_message("second", created_at="2026-01-02T00:00:00Z"))
+        )
+        queue.claim_message("first")
+
+        assert queue.fetch_with_order() == ["second"]
+
+
+class TestCreatedAtLifecycle:
+    def test_finish_processing_removes_created_at_entry(self, queue, message):
+        queue.enqueue_message(message)
+        queue.claim_message(message.message_id)
+        assert queue.redis.hexists(queue.created_at_key, message.message_id)
+
+        queue.finish_processing(message.message_id)
+
+        assert not queue.redis.hexists(queue.created_at_key, message.message_id)
+
+    def test_drop_message_removes_created_at_entry(self, queue, message):
+        queue.enqueue_message(message)
+        assert queue.redis.hexists(queue.created_at_key, message.message_id)
+
+        queue.drop_message(message.message_id)
+
+        assert not queue.redis.hexists(queue.created_at_key, message.message_id)
 
 
 class TestGetStaleMessages:
