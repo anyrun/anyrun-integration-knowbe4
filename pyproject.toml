@@ -1,7 +1,7 @@
 [project]
-name = "anyrun-knowbe4-phisher"
+name = "anyrun-integration-knowbe4"
 version = "1.0.0"
-description = "Add your description here"
+description = "ANY.RUN integration with the KnowBe4 PhishER"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
