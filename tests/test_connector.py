@@ -146,7 +146,6 @@ class TestProcessOne:
         fake_phisher.add_tags.assert_any_call(
             message, [Tags.anyrun_scanned, Tags.anyrun_malicious]
         )
-        fake_phisher.add_comment.assert_called_once()
         conn.queue.finish_processing.assert_called_once_with(message.message_id)
 
     def test_malicious_verdict_sets_threat_category_by_default(
@@ -202,23 +201,6 @@ class TestProcessOne:
         conn._process_one(message.message_id)  # must not raise
 
         conn.queue.finish_processing.assert_called_once_with(message.message_id)
-
-    def test_ingestion_tag_is_dropped_alongside_queued(
-        self, conn, fake_phisher, monkeypatch
-    ):
-        monkeypatch.setattr(connector_module, "INGESTION_TAG", "ANYRUN_REQUEST")
-        message = Message(_raw_message())
-        fake_phisher.get_message.return_value = message
-        conn.queue.claim_message.return_value = True
-        conn.anyrun.submit_download_windows.return_value = "task-1"
-        conn.anyrun.wait_for_verdict.return_value = "clean"
-        conn.anyrun.report_url.return_value = "url"
-
-        conn._process_one(message.message_id)
-
-        fake_phisher.remove_tags.assert_any_call(
-            message, [Tags.anyrun_queued, "ANYRUN_REQUEST"]
-        )
 
     def test_resolved_message_is_dropped_without_submitting(self, conn, fake_phisher):
         message = Message(_raw_message(actionStatus="resolved"))

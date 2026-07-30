@@ -47,6 +47,7 @@ class Connector:
                 "Enqueued %s, tagging as %s", message.message_id, Tags.anyrun_queued
             )
             phisher.add_tags(message, [Tags.anyrun_queued])
+            self._safe_remove_tags(phisher, message, [INGESTION_TAG])
         except Exception:
             logger.exception("Failed to tag %s as queued", message.message_id)
 
@@ -79,26 +80,30 @@ class Connector:
 
             try:
                 tags_to_drop = [Tags.anyrun_queued]
-                if INGESTION_TAG:
-                    tags_to_drop.append(INGESTION_TAG)
+
                 self._safe_remove_tags(phisher, message, tags_to_drop)
                 phisher.add_tags(message, [Tags.anyrun_pending])
 
                 logger.info("Submitting %s to ANY.RUN", message_id)
                 task_id = self.anyrun.submit_download_windows(message.raw_url)
+                report_url = self.anyrun.report_url(task_id)
+
+                phisher.add_comment(
+                    message,
+                    f"Link to ANY.RUN analysis: {report_url}",
+                )
 
                 logger.info(
                     "Waiting for ANY.RUN task %s (message %s)", task_id, message_id
                 )
                 verdict = self.anyrun.wait_for_verdict(task_id)
                 verdict_tag = Tags.map_verdict_to_tag(verdict)
-                report_url = self.anyrun.report_url(task_id)
 
                 phisher.remove_tags(message, [Tags.anyrun_pending])
                 phisher.add_tags(message, [Tags.anyrun_scanned, verdict_tag])
                 phisher.add_comment(
                     message,
-                    f"ANY.RUN result: {verdict.upper()}. Link to analysis: {report_url}",
+                    f"ANY.RUN verdict: {verdict.upper()}",
                 )
 
                 if verdict_tag == Tags.anyrun_malicious and SET_CATEGORY_ON_MALICIOUS:
