@@ -1,5 +1,6 @@
 import pytest
 
+import phisher as phisher_module
 from exceptions import InvalidMessage, PhisherRequestError
 from message import Message
 from phisher import Phisher
@@ -42,7 +43,12 @@ class TestListMessages:
                 "data": {
                     "phisherMessages": {
                         "nodes": [_raw_message("a"), _raw_message("b")],
-                        "pagination": {"page": 1, "pages": 1, "per": 50, "totalCount": 2},
+                        "pagination": {
+                            "page": 1,
+                            "pages": 1,
+                            "per": 50,
+                            "totalCount": 2,
+                        },
                     }
                 }
             }
@@ -63,7 +69,12 @@ class TestListMessages:
                     "data": {
                         "phisherMessages": {
                             "nodes": [],
-                            "pagination": {"page": 1, "pages": 1, "per": 5, "totalCount": 0},
+                            "pagination": {
+                                "page": 1,
+                                "pages": 1,
+                                "per": 5,
+                                "totalCount": 0,
+                            },
                         }
                     }
                 }
@@ -152,7 +163,9 @@ class TestAddTags:
 
 class TestRemoveTags:
     def test_updates_local_message(self, phisher):
-        message = Message(_raw_message(tags=[{"name": "ANYRUN_QUEUED", "type": "system"}]))
+        message = Message(
+            _raw_message(tags=[{"name": "ANYRUN_QUEUED", "type": "system"}])
+        )
         phisher._session.request = lambda **kwargs: FakeResponse(
             {"data": {"phisherTagsDelete": {"nodes": [], "errors": []}}}
         )
@@ -235,6 +248,25 @@ class TestAddComment:
 
         with pytest.raises(PhisherRequestError):
             phisher.add_comment(message, "hi")
+
+
+class TestProxy:
+    def test_no_proxy_by_default(self):
+        with Phisher() as p:
+            assert p._session.proxies == {}
+
+    def test_uses_http_proxy_when_configured(self, monkeypatch):
+        monkeypatch.setattr(
+            phisher_module,
+            "HTTP_PROXY_URL",
+            "http://user:pass@proxy.company.local:3128",
+        )
+
+        with Phisher() as p:
+            assert p._session.proxies == {
+                "http": "http://user:pass@proxy.company.local:3128",
+                "https": "http://user:pass@proxy.company.local:3128",
+            }
 
 
 class TestMakeRequestErrorHandling:

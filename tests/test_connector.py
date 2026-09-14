@@ -114,7 +114,45 @@ class TestProcess:
 
         conn.process()
 
-        conn.anyrun.submit_download_windows.assert_not_called()
+        conn.anyrun.submit_download.assert_not_called()
+
+    def test_parallel_limits_failure_writes_error_to_queue_head(
+        self, conn, fake_phisher
+    ):
+        message = Message(_raw_message("head-msg"))
+        conn.anyrun.get_parallel_limits.side_effect = RuntimeError("invalid API key")
+        conn.queue.fetch_with_order.return_value = ["head-msg", "other-msg"]
+        fake_phisher.get_message.return_value = message
+
+        conn.process()
+
+        conn.queue.drop_message.assert_called_once_with("head-msg")
+        fake_phisher.add_tags.assert_any_call(message, [Tags.anyrun_error])
+        fake_phisher.add_comment.assert_called_once()
+        assert "invalid API key" in fake_phisher.add_comment.call_args[0][1]
+
+    def test_parallel_limits_failure_with_empty_queue_writes_nothing(
+        self, conn, fake_phisher
+    ):
+        conn.anyrun.get_parallel_limits.side_effect = RuntimeError("invalid API key")
+        conn.queue.fetch_with_order.return_value = []
+
+        conn.process()
+
+        fake_phisher.get_message.assert_not_called()
+        fake_phisher.add_tags.assert_not_called()
+
+    def test_parallel_limits_failure_message_refresh_error_leaves_queued(
+        self, conn, fake_phisher
+    ):
+        conn.anyrun.get_parallel_limits.side_effect = RuntimeError("invalid API key")
+        conn.queue.fetch_with_order.return_value = ["head-msg"]
+        fake_phisher.get_message.side_effect = RuntimeError("PhishER unreachable")
+
+        conn.process()
+
+        conn.queue.drop_message.assert_not_called()
+        fake_phisher.add_tags.assert_not_called()
 
     def test_processes_each_queued_message(self, conn, fake_phisher, monkeypatch):
         conn.queue.fetch_with_order.return_value = ["a", "b"]
@@ -134,7 +172,7 @@ class TestProcessOne:
         message = Message(_raw_message())
         fake_phisher.get_message.return_value = message
         conn.queue.claim_message.return_value = True
-        conn.anyrun.submit_download_windows.return_value = "task-1"
+        conn.anyrun.submit_download.return_value = "task-1"
         conn.anyrun.wait_for_verdict.return_value = "Malicious activity"
         conn.anyrun.report_url.return_value = "https://app.any.run/tasks/task-1"
 
@@ -154,7 +192,7 @@ class TestProcessOne:
         message = Message(_raw_message())
         fake_phisher.get_message.return_value = message
         conn.queue.claim_message.return_value = True
-        conn.anyrun.submit_download_windows.return_value = "task-1"
+        conn.anyrun.submit_download.return_value = "task-1"
         conn.anyrun.wait_for_verdict.return_value = "Malicious activity"
         conn.anyrun.report_url.return_value = "url"
 
@@ -169,7 +207,7 @@ class TestProcessOne:
         message = Message(_raw_message())
         fake_phisher.get_message.return_value = message
         conn.queue.claim_message.return_value = True
-        conn.anyrun.submit_download_windows.return_value = "task-1"
+        conn.anyrun.submit_download.return_value = "task-1"
         conn.anyrun.wait_for_verdict.return_value = "Malicious activity"
         conn.anyrun.report_url.return_value = "url"
 
@@ -181,7 +219,7 @@ class TestProcessOne:
         message = Message(_raw_message())
         fake_phisher.get_message.return_value = message
         conn.queue.claim_message.return_value = True
-        conn.anyrun.submit_download_windows.return_value = "task-1"
+        conn.anyrun.submit_download.return_value = "task-1"
         conn.anyrun.wait_for_verdict.return_value = "No threats detected"
         conn.anyrun.report_url.return_value = "url"
 
@@ -193,7 +231,7 @@ class TestProcessOne:
         message = Message(_raw_message())
         fake_phisher.get_message.return_value = message
         conn.queue.claim_message.return_value = True
-        conn.anyrun.submit_download_windows.return_value = "task-1"
+        conn.anyrun.submit_download.return_value = "task-1"
         conn.anyrun.wait_for_verdict.return_value = "Malicious activity"
         conn.anyrun.report_url.return_value = "url"
         fake_phisher.set_category.side_effect = RuntimeError("PhishER down")
@@ -209,7 +247,7 @@ class TestProcessOne:
         conn._process_one(message.message_id)
 
         conn.queue.drop_message.assert_called_once_with(message.message_id)
-        conn.anyrun.submit_download_windows.assert_not_called()
+        conn.anyrun.submit_download.assert_not_called()
         conn.queue.claim_message.assert_not_called()
 
     def test_claim_failure_skips_processing(self, conn, fake_phisher):
@@ -219,13 +257,13 @@ class TestProcessOne:
 
         conn._process_one(message.message_id)
 
-        conn.anyrun.submit_download_windows.assert_not_called()
+        conn.anyrun.submit_download.assert_not_called()
 
     def test_parallel_limit_error_requeues(self, conn, fake_phisher):
         message = Message(_raw_message())
         fake_phisher.get_message.return_value = message
         conn.queue.claim_message.return_value = True
-        conn.anyrun.submit_download_windows.side_effect = AnyRunParallelLimitError(
+        conn.anyrun.submit_download.side_effect = AnyRunParallelLimitError(
             "no slots"
         )
         conn.queue.enqueue_message.return_value = (True, "ok")
@@ -240,7 +278,7 @@ class TestProcessOne:
         message = Message(_raw_message())
         fake_phisher.get_message.return_value = message
         conn.queue.claim_message.return_value = True
-        conn.anyrun.submit_download_windows.side_effect = RuntimeError(
+        conn.anyrun.submit_download.side_effect = RuntimeError(
             "sandbox exploded"
         )
 
