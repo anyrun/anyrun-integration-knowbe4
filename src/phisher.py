@@ -5,6 +5,7 @@ import requests
 
 from const import (
     DISCOVERY_PER_PAGE,
+    HTTP_PROXY_URL,
     INGESTION_TAG,
     PHISHER_API_TOKEN,
     PHISHER_ENDPOINT,
@@ -45,6 +46,11 @@ class Phisher:
                 "Content-Type": "application/json",
                 "Accept": "application/json",
             }
+            if HTTP_PROXY_URL:
+                self._session.proxies = {
+                    "http": HTTP_PROXY_URL,
+                    "https": HTTP_PROXY_URL,
+                }
 
     def _close_session(self) -> None:
         if self._session:

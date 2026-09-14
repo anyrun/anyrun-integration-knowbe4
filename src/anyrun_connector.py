@@ -5,19 +5,42 @@ from anyrun.connectors import SandboxConnector
 from pydantic import BaseModel
 
 from const import (
-    ANYRUN_ANALYSIS_DURATION,
     ANYRUN_API_KEY,
+    ANYRUN_AUTOMATED_INTERACTIVITY,
+    ANYRUN_ENV_BITNESS,
+    ANYRUN_ENV_LOCALE,
+    ANYRUN_ENV_TYPE,
+    ANYRUN_ENV_VERSION,
+    ANYRUN_GEO,
+    ANYRUN_LINUX_ENV_OS,
+    ANYRUN_MITM,
+    ANYRUN_OBJ_EXT_CMD,
+    ANYRUN_OBJ_EXT_EXTENSION,
+    ANYRUN_OBJ_EXT_STARTFOLDER,
+    ANYRUN_OPT_NETWORK_CONNECT,
+    ANYRUN_OPT_NETWORK_FAKENET,
+    ANYRUN_OPT_TIMEOUT,
+    ANYRUN_OS_TYPE,
     ANYRUN_PRIVACY_TYPE,
     ANYRUN_REPORT_PREFIX,
+    ANYRUN_RESIDENTIAL_PROXY,
+    ANYRUN_RESIDENTIAL_PROXY_GEO,
     ANYRUN_ROOT_URL,
+    ANYRUN_TOR,
     ANYRUN_VERDICT_RETRY_ATTEMPTS,
     ANYRUN_VERDICT_RETRY_DELAY_SECONDS,
-    ANYRUN_WINDOWS_ENV_VERSION,
+    HTTP_PROXY_URL,
     __version__,
 )
 from exceptions import AnyRunApiError, AnyRunParallelLimitError
 
 logger = logging.getLogger(__name__)
+
+_CONNECTOR_FACTORIES = {
+    "windows": SandboxConnector.windows,
+    "linux": SandboxConnector.linux,
+    "macos": SandboxConnector.macos,
+}
 
 
 class UserLimits(BaseModel):
@@ -28,7 +51,7 @@ class UserLimits(BaseModel):
 class ANYRUN:
     def __init__(self) -> None:
         self.api_key = ANYRUN_API_KEY
-        self.windows_env_version = ANYRUN_WINDOWS_ENV_VERSION
+        self.os_type = ANYRUN_OS_TYPE
         self.root_url = ANYRUN_ROOT_URL
         self.report_prefix = ANYRUN_REPORT_PREFIX
 
@@ -37,11 +60,44 @@ class ANYRUN:
     def _connector(self) -> SandboxConnector:
         # A fresh connector is created per call (instead of reusing one shared
         # instance) so concurrent worker threads never share SDK connection state.
-        return SandboxConnector.windows(
+        factory = _CONNECTOR_FACTORIES[self.os_type]
+        return factory(
             api_key=self.api_key,
             integration=self.telemetry,
             root_url=self.root_url,
+            proxy=HTTP_PROXY_URL,
         )
+
+    def _submit_kwargs(self, url: str) -> dict:
+        kwargs = dict(
+            obj_url=url,
+            env_locale=ANYRUN_ENV_LOCALE,
+            opt_network_connect=ANYRUN_OPT_NETWORK_CONNECT,
+            opt_network_fakenet=ANYRUN_OPT_NETWORK_FAKENET,
+            opt_network_tor=ANYRUN_TOR,
+            opt_network_geo=ANYRUN_GEO,
+            opt_network_mitm=ANYRUN_MITM,
+            opt_network_residential_proxy=ANYRUN_RESIDENTIAL_PROXY,
+            opt_network_residential_proxy_geo=ANYRUN_RESIDENTIAL_PROXY_GEO,
+            opt_privacy_type=ANYRUN_PRIVACY_TYPE,
+            opt_timeout=ANYRUN_OPT_TIMEOUT,
+            opt_automated_interactivity=ANYRUN_AUTOMATED_INTERACTIVITY,
+            opt_privacy_hidesource=True,
+            obj_ext_startfolder=ANYRUN_OBJ_EXT_STARTFOLDER,
+            obj_ext_cmd=ANYRUN_OBJ_EXT_CMD or None,
+            obj_ext_extension=ANYRUN_OBJ_EXT_EXTENSION,
+        )
+
+        if self.os_type == "windows":
+            kwargs.update(
+                env_version=ANYRUN_ENV_VERSION,
+                env_bitness=ANYRUN_ENV_BITNESS,
+                env_type=ANYRUN_ENV_TYPE,
+            )
+        elif self.os_type == "linux":
+            kwargs.update(env_os=ANYRUN_LINUX_ENV_OS)
+
+        return kwargs
 
     @staticmethod
     def _is_parallel_limit_error(error: Exception) -> bool:
@@ -92,16 +148,10 @@ class ANYRUN:
         except Exception as e:
             raise AnyRunApiError(f"Can't get user limits from ANY.RUN API: {e}")
 
-    def submit_download_windows(self, url: str) -> str:
+    def submit_download(self, url: str) -> str:
         try:
             with self._connector() as connector:
-                return connector.run_download_analysis(
-                    obj_url=url,
-                    env_version=self.windows_env_version,
-                    opt_privacy_hidesource=True,
-                    opt_timeout=ANYRUN_ANALYSIS_DURATION,
-                    opt_privacy_type=ANYRUN_PRIVACY_TYPE,
-                )
+                return connector.run_download_analysis(**self._submit_kwargs(url))
         except Exception as e:
             if self._is_parallel_limit_error(e):
                 raise AnyRunParallelLimitError(

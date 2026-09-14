@@ -17,7 +17,9 @@ class FakeSandboxConnector:
         self._user_limits = user_limits or {"parallels": {"total": 3, "available": 2}}
         self._task_id = task_id
         self._run_download_error = run_download_error
-        self._status_events = status_events if status_events is not None else ["running", "done"]
+        self._status_events = (
+            status_events if status_events is not None else ["running", "done"]
+        )
         # verdict_results: list of return values / exceptions, consumed in order
         self._verdict_results = list(verdict_results or ["Malicious activity"])
         self.get_analysis_verdict_calls = 0
@@ -53,12 +55,16 @@ def anyrun():
 
 
 def _patch_connector(monkeypatch, fake_connector):
-    monkeypatch.setattr(anyrun_connector_module.ANYRUN, "_connector", lambda self: fake_connector)
+    monkeypatch.setattr(
+        anyrun_connector_module.ANYRUN, "_connector", lambda self: fake_connector
+    )
 
 
 class TestGetParallelLimits:
     def test_returns_user_limits(self, anyrun, monkeypatch):
-        fake = FakeSandboxConnector(user_limits={"parallels": {"total": 5, "available": 4}})
+        fake = FakeSandboxConnector(
+            user_limits={"parallels": {"total": 5, "available": 4}}
+        )
         _patch_connector(monkeypatch, fake)
 
         limits = anyrun.get_parallel_limits()
@@ -76,12 +82,12 @@ class TestGetParallelLimits:
             anyrun.get_parallel_limits()
 
 
-class TestSubmitDownloadWindows:
+class TestSubmitDownload:
     def test_returns_task_id(self, anyrun, monkeypatch):
         fake = FakeSandboxConnector(task_id="abc-123")
         _patch_connector(monkeypatch, fake)
 
-        task_id = anyrun.submit_download_windows("https://example.com/e.eml")
+        task_id = anyrun.submit_download("https://example.com/e.eml")
 
         assert task_id == "abc-123"
 
@@ -92,14 +98,14 @@ class TestSubmitDownloadWindows:
         _patch_connector(monkeypatch, fake)
 
         with pytest.raises(AnyRunParallelLimitError):
-            anyrun.submit_download_windows("https://example.com/e.eml")
+            anyrun.submit_download("https://example.com/e.eml")
 
     def test_raises_generic_api_error_for_unrelated_failures(self, anyrun, monkeypatch):
         fake = FakeSandboxConnector(run_download_error=RuntimeError("boom"))
         _patch_connector(monkeypatch, fake)
 
         with pytest.raises(AnyRunApiError):
-            anyrun.submit_download_windows("https://example.com/e.eml")
+            anyrun.submit_download("https://example.com/e.eml")
 
 
 class TestWaitForVerdict:
@@ -114,7 +120,9 @@ class TestWaitForVerdict:
 
     def test_retries_transient_failure_then_succeeds(self, anyrun, monkeypatch):
         monkeypatch.setattr(anyrun_connector_module, "ANYRUN_VERDICT_RETRY_ATTEMPTS", 3)
-        monkeypatch.setattr(anyrun_connector_module, "ANYRUN_VERDICT_RETRY_DELAY_SECONDS", 0)
+        monkeypatch.setattr(
+            anyrun_connector_module, "ANYRUN_VERDICT_RETRY_DELAY_SECONDS", 0
+        )
         monkeypatch.setattr(anyrun_connector_module.time, "sleep", lambda _: None)
 
         fake = FakeSandboxConnector(
@@ -133,7 +141,9 @@ class TestWaitForVerdict:
 
     def test_exhausts_retries_and_raises_api_error(self, anyrun, monkeypatch):
         monkeypatch.setattr(anyrun_connector_module, "ANYRUN_VERDICT_RETRY_ATTEMPTS", 3)
-        monkeypatch.setattr(anyrun_connector_module, "ANYRUN_VERDICT_RETRY_DELAY_SECONDS", 0)
+        monkeypatch.setattr(
+            anyrun_connector_module, "ANYRUN_VERDICT_RETRY_DELAY_SECONDS", 0
+        )
         monkeypatch.setattr(anyrun_connector_module.time, "sleep", lambda _: None)
 
         fake = FakeSandboxConnector(
@@ -155,3 +165,80 @@ class TestReportUrl:
     def test_formats_task_id_into_prefix(self, anyrun):
         anyrun.report_prefix = "https://app.any.run/tasks/"
         assert anyrun.report_url("abc-123") == "https://app.any.run/tasks/abc-123"
+
+
+class TestConnectorFactory:
+    def test_dispatches_to_factory_matching_os_type(self, anyrun, monkeypatch):
+        calls = []
+        anyrun.os_type = "linux"
+        monkeypatch.setitem(
+            anyrun_connector_module._CONNECTOR_FACTORIES,
+            "linux",
+            lambda **kwargs: calls.append(kwargs) or "linux-connector",
+        )
+
+        result = anyrun._connector()
+
+        assert result == "linux-connector"
+        assert calls[0]["api_key"] == anyrun.api_key
+
+    def test_passes_proxy_settings_through(self, anyrun, monkeypatch):
+        captured = {}
+        monkeypatch.setattr(
+            anyrun_connector_module,
+            "HTTP_PROXY_URL",
+            "http://proxy.company.local:3128",
+        )
+        monkeypatch.setitem(
+            anyrun_connector_module._CONNECTOR_FACTORIES,
+            "windows",
+            lambda **kwargs: captured.update(kwargs),
+        )
+
+        anyrun._connector()
+
+        assert captured["proxy"] == "http://proxy.company.local:3128"
+
+    def test_no_proxy_configured_passes_none(self, anyrun, monkeypatch):
+        captured = {}
+        monkeypatch.setattr(anyrun_connector_module, "HTTP_PROXY_URL", None)
+        monkeypatch.setitem(
+            anyrun_connector_module._CONNECTOR_FACTORIES,
+            "windows",
+            lambda **kwargs: captured.update(kwargs),
+        )
+
+        anyrun._connector()
+
+        assert captured["proxy"] is None
+
+
+class TestSubmitKwargs:
+    def test_windows_includes_env_version_bitness_and_type(self, anyrun):
+        anyrun.os_type = "windows"
+        kwargs = anyrun._submit_kwargs("https://example.com/e.eml")
+
+        assert "env_version" in kwargs
+        assert "env_bitness" in kwargs
+        assert "env_type" in kwargs
+        assert "env_os" not in kwargs
+
+    def test_linux_includes_env_os_instead_of_windows_fields(self, anyrun, monkeypatch):
+        anyrun.os_type = "linux"
+        monkeypatch.setattr(anyrun_connector_module, "ANYRUN_LINUX_ENV_OS", "ubuntu")
+
+        kwargs = anyrun._submit_kwargs("https://example.com/e.eml")
+
+        assert kwargs["env_os"] == "ubuntu"
+        assert "env_version" not in kwargs
+        assert "env_bitness" not in kwargs
+        assert "env_type" not in kwargs
+
+    def test_macos_has_no_os_version_fields(self, anyrun):
+        anyrun.os_type = "macos"
+        kwargs = anyrun._submit_kwargs("https://example.com/e.eml")
+
+        assert "env_os" not in kwargs
+        assert "env_version" not in kwargs
+        assert "env_bitness" not in kwargs
+        assert "env_type" not in kwargs

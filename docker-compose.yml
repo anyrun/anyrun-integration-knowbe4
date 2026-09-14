@@ -5,8 +5,6 @@ services:
     restart: unless-stopped
     env_file: .env
     environment:
-      REDIS_HOST: redis
-      REDIS_PORT: 6379
       ANYRUN_VERDICT_RETRY_ATTEMPTS: 5
       ANYRUN_VERDICT_RETRY_DELAY_SECONDS: 10
     volumes:

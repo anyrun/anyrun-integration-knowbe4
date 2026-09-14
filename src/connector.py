@@ -85,7 +85,7 @@ class Connector:
                 phisher.add_tags(message, [Tags.anyrun_pending])
 
                 logger.info("Submitting %s to ANY.RUN", message_id)
-                task_id = self.anyrun.submit_download_windows(message.raw_url)
+                task_id = self.anyrun.submit_download(message.raw_url)
                 report_url = self.anyrun.report_url(task_id)
 
                 phisher.add_comment(
@@ -122,6 +122,36 @@ class Connector:
                 logger.exception("Processing failed for %s", message_id)
                 self.queue.drop_message(message_id)
                 self._write_error(phisher, message, error)
+
+    def _write_error_to_queue_head(self, error: Exception) -> None:
+        """Surface a failure that happened before any message was claimed.
+
+        `get_parallel_limits()` runs once per `process()` call, ahead of
+        picking a message off the queue; if it fails (e.g. an invalid
+        ANY.RUN API key), the failure has nowhere to land otherwise and the
+        head-of-queue message would stay silently stuck as ANYRUN_QUEUED /
+        ANYRUN_PENDING forever. One message is error-tagged per call so a
+        persistent failure (like a bad key) drains the queue into
+        ANYRUN_ERROR over successive runs instead of writing to every queued
+        message at once.
+        """
+        message_ids = self.queue.fetch_with_order(order="asc")
+        if not message_ids:
+            return
+
+        message_id = message_ids[0]
+        with Phisher() as phisher:
+            try:
+                message = phisher.get_message(message_id)
+            except Exception:
+                logger.exception(
+                    "Can't refresh message %s to report ANY.RUN API error; leaving queued",
+                    message_id,
+                )
+                return
+
+            self.queue.drop_message(message_id)
+            self._write_error(phisher, message, error)
 
     def _requeue(self, phisher: Phisher, message: Message) -> None:
         self.queue.drop_message(message.message_id)
@@ -263,8 +293,9 @@ class Connector:
     def process(self) -> None:
         try:
             limits = self.anyrun.get_parallel_limits()
-        except Exception:
+        except Exception as error:
             logger.exception("Failed to fetch ANY.RUN parallel limits")
+            self._write_error_to_queue_head(error)
             return
 
         message_ids = self.queue.fetch_with_order(order="asc")
