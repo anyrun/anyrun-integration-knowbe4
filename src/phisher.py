@@ -11,6 +11,7 @@ from const import (
     PHISHER_ENDPOINT,
     PHISHER_MESSAGE_FILTER,
     PHISHER_REQUEST_TIMEOUT,
+    __version__,
 )
 from exceptions import InvalidMessage, PhisherRequestError
 from message import Message, Tag
@@ -45,6 +46,8 @@ class Phisher:
                 "Authorization": f"Bearer {self.api_token}",
                 "Content-Type": "application/json",
                 "Accept": "application/json",
+                "User-Agent": f"ANY.RUN-PhishER/{__version__}",
+                "X-KB4-Integration": "ANY.RUN Integration",
             }
             if HTTP_PROXY_URL:
                 self._session.proxies = {
